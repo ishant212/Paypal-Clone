@@ -136,7 +136,6 @@ paypal-clone/
 │   │   │   │   ├── service/           # Business logic
 │   │   │   │   ├── repository/        # JPA repositories
 │   │   │   │   ├── model/             # Entity classes
-│   │   │   │   ├── exception/         # Custom exceptions
 │   │   │   │   └── config/            # Security config
 │   │   │   └── resources/
 │   │   │       └── application.properties
@@ -198,7 +197,6 @@ Password: (leave blank)
 | `POST` | `/api/users` | Create a new user |
 | `GET` | `/api/users/{id}` | Fetch user by ID |
 | `GET` | `/api/users` | Fetch all users |
-| `PUT` | `/api/users/{id}` | Update user details |
 
 ### Sample Request — Create User
 
@@ -239,9 +237,6 @@ Content-Type: application/json
 ### 🟡 Fetch All Users — GET `/api/users`
 ![Get All Users](assets/get_all_users.png)
 
-### 🟠 Update User — PUT `/api/users/{id}`
-![Update User](assets/update_user.png)
-
 > 📸 Screenshots captured using Postman. More will be added with each new feature.
 
 ---
@@ -262,7 +257,7 @@ Content-Type: application/json
 
 | Name | GitHub |
 |------|--------|
-| *(Your name here)* | [@yourusername](https://github.com/yourusername) |
+| *(Ishant Shekhar Eeshu)* | [@ishant212](https://github.com/ishant212) |
 
 ---
 
