@@ -5,21 +5,22 @@
 ![Java](https://img.shields.io/badge/Java-17+-red?style=flat-square)
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.x-brightgreen?style=flat-square)
 ![Spring Security](https://img.shields.io/badge/Spring_Security-configured-blue?style=flat-square)
+![JWT](https://img.shields.io/badge/Auth-JWT-orange?style=flat-square)
 ![H2](https://img.shields.io/badge/Database-H2_In--Memory-yellow?style=flat-square)
 ![Maven](https://img.shields.io/badge/Build-Maven-orange?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Stage_1_Active-purple?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Stage_2_Complete-purple?style=flat-square)
 
 ---
 
 ## 📌 Project Status
 
-> **Stage 1 — User Service (Complete)**
+> **Stage 2 — JWT Authentication & Authorization (Complete)**
 > This project is under active development. The README is updated alongside each development stage.
 
 | Stage | Milestone | Status |
 |-------|-----------|--------|
 | 1 | User Service (CRUD + Security Setup) | ✅ Complete |
-| 2 | JWT Authentication & Authorization | 🔜 Upcoming |
+| 2 | JWT Authentication & Authorization | ✅ Complete |
 | 3 | Transaction Service | 🔜 Upcoming |
 | 4 | API Gateway + Service Discovery | 🔜 Upcoming |
 | 5 | Wallet & Balance Management | 🔜 Upcoming |
@@ -45,7 +46,7 @@
 
 ## 1. Overview
 
-A backend system inspired by PayPal, designed to demonstrate real-world **microservices architecture** using Spring Boot. The platform handles user management, authentication, and (soon) financial transactions — built with scalability, security, and clean design as core principles.
+A backend system inspired by PayPal, designed to demonstrate real-world **microservices architecture** using Spring Boot. The platform handles user management, JWT-based authentication, and (soon) financial transactions — built with scalability, security, and clean design as core principles.
 
 Each service is independently deployable, loosely coupled, and communicates over REST (with event-driven messaging planned via Kafka/RabbitMQ in later stages).
 
@@ -53,21 +54,40 @@ Each service is independently deployable, loosely coupled, and communicates over
 
 ## 2. Current Microservices
 
-### 👤 User Service *(Stage 1)*
+### 👤 User Service *(Stage 1 & 2)*
 
-Handles core user lifecycle management.
+Handles core user lifecycle management and authentication.
 
-**Features:**
+**Stage 1 Features:**
 - Create a new user
 - Fetch user by ID
 - Fetch all users
 - Update user details
 - Custom exception handling for cleaner error responses
-- Spring Security configuration (foundation for JWT in Stage 2)
+- Spring Security configuration (foundation for JWT)
+
+**Stage 2 Features:**
+- Signup API with BCrypt password hashing
+- Login API with JWT token generation
+- JWT request filter for stateless authentication
+- Role-based claims inside JWT payload
+- Spring Security context population per request
+- Stateless session management
 
 ---
 
 ## 3. Architecture
+
+### JWT Authentication Flow
+
+```
+Signup → Store User (BCrypt password)
+Login  → Validate credentials → Generate JWT
+       → Send JWT in Authorization header
+       → JWTRequestFilter validates token
+       → Populate SecurityContext
+       → Access protected endpoints
+```
 
 ### Layered Architecture (Per Service)
 
@@ -92,7 +112,7 @@ Database (H2 / MySQL) → Persistence
     ↓
 ┌─────────────────────────────────┐
 │  User Service     ← Stage 1 ✅  │
-│  Auth Service     ← Stage 2     │
+│  Auth (JWT)       ← Stage 2 ✅  │
 │  Transaction Svc  ← Stage 3     │
 │  Wallet Service   ← Stage 5     │
 │  Notification Svc ← Stage 6     │
@@ -110,11 +130,12 @@ Database (H2 / MySQL) → Persistence
 | Java 17+ | Core language | ✅ Active |
 | Spring Boot 3.x | Application framework | ✅ Active |
 | Spring Data JPA | ORM & database operations | ✅ Active |
-| Spring Security | Auth foundation | ✅ Configured |
+| Spring Security | Auth & authorization | ✅ Active |
+| JJWT 0.12.x | JWT generation & validation | ✅ Active |
 | H2 Database | In-memory DB (dev) | ✅ Active |
-| MySQL / PostgreSQL | Production DB | 🔜 Stage 2+ |
+| BCrypt | Password hashing | ✅ Active |
+| MySQL / PostgreSQL | Production DB | 🔜 Stage 3+ |
 | Maven | Build tool | ✅ Active |
-| JWT | Token-based auth | 🔜 Stage 2 |
 | API Gateway | Routing & load balancing | 🔜 Stage 4 |
 | Eureka | Service discovery | 🔜 Stage 4 |
 | Kafka / RabbitMQ | Async messaging | 🔜 Stage 6 |
@@ -128,15 +149,19 @@ Database (H2 / MySQL) → Persistence
 ```
 paypal-clone/
 │
+├── assets/                            # Screenshots
+│
 ├── user-service/
 │   ├── src/
 │   │   ├── main/
-│   │   │   ├── java/com/paypalclone/userservice/
-│   │   │   │   ├── controller/        # REST controllers
-│   │   │   │   ├── service/           # Business logic
-│   │   │   │   ├── repository/        # JPA repositories
-│   │   │   │   ├── model/             # Entity classes
-│   │   │   │   └── config/            # Security config
+│   │   │   ├── java/com/paypal/user_service/
+│   │   │   │   ├── controller/        # AuthController, UserController
+│   │   │   │   ├── dto/               # JwtResponse, LoginRequest, SignupRequest
+│   │   │   │   ├── entity/            # User
+│   │   │   │   ├── repository/        # UserRepository
+│   │   │   │   ├── security/          # SecurityConfig
+│   │   │   │   ├── service/           # UserService, UserServiceImpl
+│   │   │   │   └── util/              # JWTUtil, JWTRequestFilter
 │   │   │   └── resources/
 │   │   │       └── application.properties
 │   │   └── test/
@@ -159,7 +184,7 @@ paypal-clone/
 ### Step 1 — Clone Repository
 
 ```bash
-git clone https://github.com/your-username/paypal-clone
+git clone https://github.com/ishant212/paypal-clone
 cd paypal-clone
 ```
 
@@ -184,19 +209,69 @@ Username: sa
 Password: (leave blank)
 ```
 
-> ⚠️ H2 is an in-memory database used for development. Data resets on restart. MySQL/PostgreSQL will be integrated in Stage 2.
+> ⚠️ H2 is an in-memory database used for development. Data resets on restart. MySQL/PostgreSQL will be integrated in a later stage.
 
 ---
 
 ## 7. API Endpoints
 
+### Auth — Base URL: `/auth`
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/auth/signup` | Register a new user | ❌ |
+| `POST` | `/auth/login` | Login and receive JWT | ❌ |
+
+### Sample Request — Signup
+
+```json
+POST /auth/signup
+Content-Type: application/json
+
+{
+  "name": "Ishant Shekhar",
+  "email": "ishant@example.com",
+  "password": "securepassword"
+}
+```
+
+### Sample Response — Signup
+
+```
+User Registration successful
+```
+
+### Sample Request — Login
+
+```json
+POST /auth/login
+Content-Type: application/json
+
+{
+  "email": "ishant@example.com",
+  "password": "securepassword"
+}
+```
+
+### Sample Response — Login
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiUk9MRV9VU0VSIiwic3ViIjoiaXNoYW50QGV4YW1wbGUuY29tIn0..."
+}
+```
+
+> Use the returned token as `Authorization: Bearer <token>` in subsequent requests to protected endpoints.
+
+---
+
 ### User Service — Base URL: `/api/users`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/users` | Create a new user |
-| `GET` | `/api/users/{id}` | Fetch user by ID |
-| `GET` | `/api/users` | Fetch all users |
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/api/users` | Create a new user | ❌ |
+| `GET` | `/api/users/{id}` | Fetch user by ID | ✅ |
+| `GET` | `/api/users` | Fetch all users | ✅ |
 
 ### Sample Request — Create User
 
@@ -211,7 +286,7 @@ Content-Type: application/json
 }
 ```
 
-### Sample Response
+### Sample Response — Create User
 
 ```json
 {
@@ -227,6 +302,12 @@ Content-Type: application/json
 ---
 
 ## 8. Screenshots
+
+### 🟢 Signup — POST `/auth/signup`
+![Signup](assets/user_signup.png)
+
+### 🔵 Login — POST `/auth/login`
+![Login](assets/user_login.png)
 
 ### 🟢 Create User — POST `/api/users`
 ![Create User](assets/create_user.png)
@@ -245,20 +326,10 @@ Content-Type: application/json
 
 | Service | Responsibility |
 |---------|---------------|
-| Auth Service | JWT login, token refresh, logout |
 | Transaction Service | Send/receive money, transaction history |
 | Wallet Service | Balance management, top-up |
 | Notification Service | Email/SMS alerts via Kafka events |
 | API Gateway | Centralized routing, rate limiting |
 
----
-
-## 10. Contributors
-
-| Name | GitHub |
-|------|--------|
-| *(Ishant Shekhar Eeshu)* | [@ishant212](https://github.com/ishant212) |
-
----
-
+---  
 > ⭐ This project is being built stage by stage as a portfolio demonstration of real-world microservices design. Star it to follow along!
