@@ -8,20 +8,20 @@
 ![JWT](https://img.shields.io/badge/Auth-JWT-orange?style=flat-square)
 ![H2](https://img.shields.io/badge/Database-H2_In--Memory-yellow?style=flat-square)
 ![Maven](https://img.shields.io/badge/Build-Maven-orange?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Stage_2_Complete-purple?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Stage_3_In_Progress-purple?style=flat-square)
 
 ---
 
 ## 📌 Project Status
 
-> **Stage 2 — JWT Authentication & Authorization (Complete)**
+> **Stage 3 — Transaction Service (In Progress)**
 > This project is under active development. The README is updated alongside each development stage.
 
 | Stage | Milestone | Status |
 |-------|-----------|--------|
 | 1 | User Service (CRUD + Security Setup) | ✅ Complete |
 | 2 | JWT Authentication & Authorization | ✅ Complete |
-| 3 | Transaction Service | 🔜 Upcoming |
+| 3 | Transaction Service | 🔄 In Progress |
 | 4 | API Gateway + Service Discovery | 🔜 Upcoming |
 | 5 | Wallet & Balance Management | 🔜 Upcoming |
 | 6 | Notifications Service | 🔜 Upcoming |
@@ -46,7 +46,7 @@
 
 ## 1. Overview
 
-A backend system inspired by PayPal, designed to demonstrate real-world **microservices architecture** using Spring Boot. The platform handles user management, JWT-based authentication, and (soon) financial transactions — built with scalability, security, and clean design as core principles.
+A backend system inspired by PayPal, designed to demonstrate real-world **microservices architecture** using Spring Boot. The platform handles user management, JWT-based authentication, and financial transactions — built with scalability, security, and clean design as core principles.
 
 Each service is independently deployable, loosely coupled, and communicates over REST (with event-driven messaging planned via Kafka/RabbitMQ in later stages).
 
@@ -76,6 +76,22 @@ Handles core user lifecycle management and authentication.
 
 ---
 
+### 💸 Transaction Service *(Stage 3 — In Progress)*
+
+Handles the creation and persistence of financial transactions between users.
+
+**Stage 3 Features (completed so far):**
+- `Transaction` entity with fields: `id`, `senderId`, `receiverId`, `amount`, `timestamp`, `status`
+- JPA annotations: `@Entity`, `@Table`, `@Id`, `@GeneratedValue`, `@Column`
+- Amount validation using `@Positive` with Spring Validation dependency
+- Automatic `timestamp` population via `@PrePersist` using `LocalDateTime.now()`
+- Default `status` set to `"PENDING"` on pre-persist
+- `POST /api/transactions/create` endpoint — creates and persists a transaction, returns full transaction object
+- Clean column naming (`sender_id`, `receiver_id`) to accurately reflect stored data
+- Hibernate/H2 debugging — traced and fixed `NULL not allowed` constraint violations caused by incorrect getter/setter naming and JSON mapping issues
+
+---
+
 ## 3. Architecture
 
 ### JWT Authentication Flow
@@ -87,6 +103,22 @@ Login  → Validate credentials → Generate JWT
        → JWTRequestFilter validates token
        → Populate SecurityContext
        → Access protected endpoints
+```
+
+### Transaction Flow *(Stage 3)*
+
+```
+POST /api/transactions/create
+       ↓
+TransactionController
+       ↓
+TransactionService       → Validates input (amount > 0)
+       ↓
+@PrePersist              → Sets timestamp = now(), status = "PENDING"
+       ↓
+TransactionRepository    → Persists to H2 (MySQL in later stage)
+       ↓
+Response: { id, senderId, receiverId, amount, timestamp, status }
 ```
 
 ### Layered Architecture (Per Service)
@@ -113,7 +145,7 @@ Database (H2 / MySQL) → Persistence
 ┌─────────────────────────────────┐
 │  User Service     ← Stage 1 ✅  │
 │  Auth (JWT)       ← Stage 2 ✅  │
-│  Transaction Svc  ← Stage 3     │
+│  Transaction Svc  ← Stage 3 🔄  │
 │  Wallet Service   ← Stage 5     │
 │  Notification Svc ← Stage 6     │
 └─────────────────────────────────┘
@@ -132,6 +164,7 @@ Database (H2 / MySQL) → Persistence
 | Spring Data JPA | ORM & database operations | ✅ Active |
 | Spring Security | Auth & authorization | ✅ Active |
 | JJWT 0.12.x | JWT generation & validation | ✅ Active |
+| Spring Validation | Request validation (`@Positive`, etc.) | ✅ Active |
 | H2 Database | In-memory DB (dev) | ✅ Active |
 | BCrypt | Password hashing | ✅ Active |
 | MySQL / PostgreSQL | Production DB | 🔜 Stage 3+ |
@@ -167,6 +200,19 @@ paypal-clone/
 │   │   └── test/
 │   └── pom.xml
 │
+├── transaction-service/               ← Stage 3
+│   ├── src/
+│   │   ├── main/
+│   │   │   ├── java/com/paypal/transaction_service/
+│   │   │   │   ├── controller/        # TransactionController
+│   │   │   │   ├── entity/            # Transaction
+│   │   │   │   ├── repository/        # TransactionRepository
+│   │   │   │   └── service/           # TransactionService, TransactionServiceImpl
+│   │   │   └── resources/
+│   │   │       └── application.properties
+│   │   └── test/
+│   └── pom.xml
+│
 └── README.md
 ```
 
@@ -188,10 +234,12 @@ git clone https://github.com/ishant212/paypal-clone
 cd paypal-clone
 ```
 
-### Step 2 — Navigate to User Service
+### Step 2 — Navigate to a Service
 
 ```bash
 cd user-service
+# or
+cd transaction-service
 ```
 
 ### Step 3 — Build & Run
@@ -297,6 +345,40 @@ Content-Type: application/json
 }
 ```
 
+---
+
+### Transaction Service — Base URL: `/api/transactions` *(Stage 3)*
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/api/transactions/create` | Create a new transaction | ✅ |
+
+### Sample Request — Create Transaction
+
+```json
+POST /api/transactions/create
+Content-Type: application/json
+
+{
+  "senderId": 1,
+  "receiverId": 2,
+  "amount": 140.12
+}
+```
+
+### Sample Response — Create Transaction
+
+```json
+{
+  "id": 1,
+  "senderId": 1,
+  "receiverId": 2,
+  "amount": 140.12,
+  "timestamp": "2026-05-21T09:43:31.8732542",
+  "status": "SUCCESS"
+}
+```
+
 > 📋 Full API documentation (Swagger/OpenAPI) will be added in a future stage.
 
 ---
@@ -317,6 +399,9 @@ Content-Type: application/json
 
 ### 🟡 Fetch All Users — GET `/api/users`
 ![Get All Users](assets/get_all_users.png)
+
+### 🟢 Create Transaction — POST `/api/transactions/create`
+![Create Transaction](assets/transaction.png)
 
 > 📸 Screenshots captured using Postman. More will be added with each new feature.
 
