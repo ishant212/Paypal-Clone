@@ -33,7 +33,6 @@ public class AuthController {
     @PostMapping("/signup")
     public ResponseEntity<?> signup(@RequestBody SignupRequest request) {
 
-        System.out.println(">>> Signup endpoint hit");
 
         Optional<User> existingUser = userRepository.findByEmail(request.getEmail());
 

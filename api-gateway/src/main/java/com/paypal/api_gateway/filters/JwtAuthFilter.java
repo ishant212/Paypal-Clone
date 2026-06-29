@@ -36,7 +36,7 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
 
         String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
 
-        if(!authHeader.startsWith("Bearer ")){
+        if(authHeader == null || !authHeader.startsWith("Bearer ")){
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
@@ -44,16 +44,25 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
         try{
             String token = authHeader.substring(7);
             Claims claims = JwtUtil.validateToken(token);
-            exchange.getRequest().mutate()
-                    .header("X-User-Email", claims.getSubject())
+
+            ServerWebExchange mutated = exchange.mutate()
+                    .request(exchange.getRequest().mutate()
+                            .header("X-User-Email", claims.getSubject())
+                            .header("X-User-Id", String.valueOf(claims.get("id")))
+                            .header("X-User-Role", String.valueOf(claims.get("role")))
+                            .build())
                     .build();
 
-            return chain.filter(exchange)
-                    .doOnSubscribe(s -> System.out.println("Proceeding without check"))
-                    .doOnSuccess(v -> System.out.println("successfully passed"))
-                    .doOnError(e -> System.err.println("error occured"));
+            return chain.filter(mutated);
 
-        }catch (Exception e){
+//            return chain.filter(exchange)
+//                    .doOnSubscribe(s -> System.out.println("Proceeding without check"))
+//                    .doOnSuccess(v -> System.out.println("successfully passed"))
+//                    .doOnError(e -> System.err.println("error occured"));
+
+        }catch (Exception e) {
+            e.printStackTrace();
+
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
@@ -62,6 +71,6 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        return 0;
+        return -100;
     }
 }

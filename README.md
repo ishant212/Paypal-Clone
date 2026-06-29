@@ -8,16 +8,17 @@
 ![JWT](https://img.shields.io/badge/Auth-JWT-orange?style=flat-square)
 ![H2](https://img.shields.io/badge/Database-H2_In--Memory-yellow?style=flat-square)
 ![Maven](https://img.shields.io/badge/Build-Maven-orange?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Stage_5_In_Progress-purple?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Stage_5_Complete-purple?style=flat-square)
 ![Kafka](https://img.shields.io/badge/Messaging-Apache_Kafka-black?style=flat-square)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square)
 ![Gateway](https://img.shields.io/badge/API_Gateway-Spring_Cloud_Gateway-6DB33F?style=flat-square)
+![Redis](https://img.shields.io/badge/Rate_Limiting-Redis-DC382D?style=flat-square)
 
 ---
 
 ## 📌 Project Status
 
-> **Stage 5 — API Gateway (In Progress)**
+> **Stage 5 — API Gateway with JWT Auth & Rate Limiting (Complete)**
 > This project is under active development. The README is updated alongside each development stage.
 
 | Stage | Milestone | Status |
@@ -26,7 +27,7 @@
 | 2 | JWT Authentication & Authorization | ✅ Complete |
 | 3 | Transaction Service | ✅ Complete |
 | 4 | Notification Service + Reward Service (Kafka Event-Driven Messaging) | ✅ Complete |
-| 5 | API Gateway (routing complete, rate limiting pending) | 🔄 In Progress |
+| 5 | API Gateway (routing + JWT auth + Redis rate limiting) | ✅ Complete |
 | 6 | Wallet & Balance Management | 🔜 Upcoming |
 | 7 | Docker & Kubernetes Deployment | 🔜 Upcoming |
 
@@ -125,20 +126,20 @@ A second independent consumer of transaction events, implemented by following [t
 
 ---
 
-### 🚪 API Gateway *(Stage 5 — In Progress)*
+### 🚪 API Gateway *(Stage 5 — Complete)*
 
 A single entry point that routes all client requests to the appropriate downstream microservice, built by following [this Spring Cloud Gateway tutorial](https://www.youtube.com/watch?v=e02QT3UGsHE&list=PLaihB5c0gLqZNjSIGHak3Fg_o-Sp1V_IU&index=10&t=1534s).
 
-**Stage 5 Features (completed so far):**
+**Stage 5 Features:**
 - Spring Cloud Gateway configured as the single entry point for all client traffic
 - Route definitions mapping incoming paths to User Service, Transaction Service, Notification Service, and Reward Service
 - Clients now hit the Gateway port instead of calling each service directly
 - Verified routing works end-to-end across all downstream services
 - **Centralized JWT authentication** — `JwtAuthFilter` validates the token on every incoming request *before* it's routed downstream, with `JwtUtil` handling token parsing/validation logic
 - Unauthenticated or invalid-token requests are rejected at the Gateway, so downstream services no longer need to repeat JWT checks
-
-**Pending:**
-- Rate limiting (not yet implemented — planned as the next sub-task of Stage 5)
+- **Redis-backed rate limiting** — every route (`user-service`, `transaction-service`, `reward-service`, `notification-service`) is protected by Spring Cloud Gateway's `RequestRateLimiter` filter, backed by Redis
+- Custom `KeyResolver` (`userKeyResolver`) rate-limits per authenticated user via the `X-User-Id` header, falling back to client IP address when the header is absent
+- Verified end-to-end: rapid-fire requests succeed until the configured burst capacity, then receive `429 Too Many Requests` from the Gateway
 
 ---
 
@@ -291,8 +292,9 @@ A centralized **Spring Cloud Gateway** service was introduced as the single entr
 - Route definitions map URL paths to the correct downstream microservice (User, Transaction, Notification, Reward)
 - **Centralized JWT authentication** — `JwtAuthFilter` intercepts every request at the Gateway and validates the JWT via `JwtUtil` *before* forwarding it downstream
 - Requests with a missing or invalid token are rejected at the Gateway itself, so downstream services no longer duplicate auth logic
-- Centralizes the entry point, paving the way for cross-cutting concerns like rate limiting and logging in one place
-- ⏳ **Rate limiting not yet implemented** — planned as the next step for this stage
+- **Redis-backed rate limiting** on every route via Spring Cloud Gateway's `RequestRateLimiter` filter
+- Custom `KeyResolver` rate-limits per user (`X-User-Id` header) with IP-address fallback
+- `DedupeResponseHeader` default filter applied globally to clean up duplicate CORS headers across routes
 
 ### Gateway-Level JWT Authentication
 
@@ -317,27 +319,77 @@ Components:
 - `filters/JwtAuthFilter` — Spring Cloud Gateway global/route filter that runs on every request
 - `util/JwtUtil` — shared token parsing & validation logic (signature check, expiry check)
 
+### Redis-Backed Rate Limiting
+
+Every route is protected by Spring Cloud Gateway's built-in `RequestRateLimiter` filter, backed by Redis (`spring-boot-starter-data-redis-reactive` + Lettuce).
+
+> 🐳 Unlike Kafka/Zookeeper (which run via `docker-compose.yml`), Redis runs as a **standalone container**, started separately:
+> ```bash
+> docker run -d -p 6379:6379 --name redis redis:alpine
+> ```
+> Verified with `docker exec redis redis-cli ping` → `PONG`
+
+**Configuration (applied per route):**
+```yaml
+filters:
+  - name: RequestRateLimiter
+    args:
+      key-resolver: "#{@userKeyResolver}"
+      redis-rate-limiter.replenishRate: 10
+      redis-rate-limiter.burstCapacity: 20
+      redis-rate-limiter.requestedTokens: 1
+```
+
+- **replenishRate: 10** — steady-state tokens refilled per second
+- **burstCapacity: 20** — max tokens (requests) allowed in a burst before throttling kicks in
+- **requestedTokens: 1** — tokens consumed per request
+
+**Custom Key Resolver:**
+```java
+@Bean
+public KeyResolver userKeyResolver(){
+    return exchange -> {
+        String userId = exchange.getRequest().getHeaders().getFirst("X-User-Id");
+        if (userId != null) {
+            return Mono.just(userId);
+        }
+        // fallback via IP Address
+        return Mono.just(exchange.getRequest().getRemoteAddress().getAddress().getHostAddress());
+    };
+}
+```
+
+Rate limiting is keyed per user (via `X-User-Id`) so one user's traffic can't exhaust another user's quota; if the header is missing, it falls back to limiting per client IP.
+
+**Verification:**
+
+A PowerShell script fired rapid sequential requests against the Transaction Service through the Gateway. Requests succeeded normally up through request #19, then request #20 onward returned `429 Too Many Requests`, confirming the burst capacity (20) and rate limiter were working as configured.
+
 ### Routing Flow
 
 ```
 Client Request
       ↓
-API Gateway (single entry point)
+API Gateway :8080 (single entry point)
       ↓
-JwtAuthFilter → validate token (see below)
+JwtAuthFilter → validate token (see above)
       ↓ (valid)
-      ├──→ /api/users/**         → User Service
-      ├──→ /auth/**              → User Service (Auth, unauthenticated)
-      ├──→ /api/transactions/**  → Transaction Service
-      ├──→ Notification Service  (internal, Kafka-driven)
-      └──→ Reward Service        (internal, Kafka-driven)
+      ↓
+RequestRateLimiter → check Redis token bucket (see above)
+      ↓ (under limit)
+      ├──→ /auth/**              → User Service          (localhost:8081)
+      ├──→ /api/transactions/**  → Transaction Service    (localhost:8082)
+      ├──→ /api/notifications/** → Notification Service   (localhost:8084)
+      └──→ /api/rewards/**       → Reward Service          (localhost:8085)
 ```
 
-> Note: `/auth/signup` and `/auth/login` are excluded from JWT validation at the Gateway, since users don't have a token yet at that point. Notification Service and Reward Service are Kafka consumers with no public REST endpoints, so they aren't routed through the Gateway directly — only request/response (synchronous) services are.
+> Note: `/auth/signup` and `/auth/login` are excluded from JWT validation at the Gateway, since users don't have a token yet at that point. All four routes — User, Transaction, Notification, and Reward — are rate-limited identically via the shared `userKeyResolver`.
 
 ### What's Next for Stage 5
 
-- [ ] Add rate limiting (e.g. Redis-backed `RequestRateLimiter` or Resilience4j)
+- [x] Routing to all downstream services
+- [x] Centralized JWT authentication
+- [x] Redis-backed rate limiting
 - [ ] Add Eureka-based service discovery so routes don't need hardcoded service URLs
 
 ---
@@ -390,7 +442,7 @@ Database (H2 / MySQL) → Persistence
 ```
 [Clients]
     ↓
-[API Gateway]             ← Stage 5 🔄 (routing ✅ / rate limiting ⏳)
+[API Gateway] ← Stage 5 ✅ (routing + JWT auth + Redis rate limiting)
     ↓
 ┌─────────────────────────────────┐
 │  User Service     ← Stage 1 ✅  │
@@ -402,6 +454,7 @@ Database (H2 / MySQL) → Persistence
 └─────────────────────────────────┘
     ↓
 [Message Broker - Apache Kafka] ← Stage 4 ✅
+[Redis - Rate Limiting Store]   ← Stage 5 ✅
 ```
 
 ---
@@ -420,12 +473,13 @@ Database (H2 / MySQL) → Persistence
 | Apache Kafka | Async message broker | ✅ Active |
 | Zookeeper | Kafka cluster coordination | ✅ Active |
 | Spring Cloud Gateway | API Gateway — centralized routing + JWT auth filter | ✅ Active |
+| Redis (Spring Data Redis Reactive + Lettuce) | Rate limiter token bucket store | ✅ Active |
 | Docker Compose | Local Kafka/Zookeeper orchestration | ✅ Active |
+| Docker (standalone container) | Local Redis instance for rate limiting | ✅ Active |
 | H2 Database | In-memory DB (dev) | ✅ Active |
 | BCrypt | Password hashing | ✅ Active |
 | MySQL / PostgreSQL | Production DB | 🔜 Upcoming |
 | Maven | Build tool | ✅ Active |
-| Rate Limiting (Redis / Resilience4j) | Gateway request throttling | 🔜 Stage 5 (pending) |
 | Eureka | Service discovery | 🔜 Stage 5 |
 | Kubernetes | Orchestration | 🔜 Stage 7 |
 
@@ -444,10 +498,11 @@ paypal-clone/
 │   ├── src/
 │   │   ├── main/
 │   │   │   ├── java/com/paypal/api_gateway/
+│   │   │   │   ├── config/            # RateLimitConfig (KeyResolver bean)
 │   │   │   │   ├── filters/           # JwtAuthFilter
 │   │   │   │   └── util/              # JwtUtil
 │   │   │   └── resources/
-│   │   │       └── application.yml    # Route definitions
+│   │   │       └── application.yml    # Route, JWT & rate-limiter definitions
 │   │   └── test/
 │   └── pom.xml
 │
@@ -520,7 +575,7 @@ paypal-clone/
 
 - Java 17+
 - Maven 3.8+
-- Docker & Docker Compose (for Kafka + Zookeeper)
+- Docker (for Kafka + Zookeeper via Docker Compose, and Redis as a standalone container)
 
 ### Step 1 — Clone Repository
 
@@ -535,7 +590,23 @@ cd paypal-clone
 docker compose up -d
 ```
 
-### Step 3 — Navigate to a Service
+### Step 3 — Start Redis
+
+Redis runs as a standalone container (not part of `docker-compose.yml`):
+
+```bash
+docker run -d -p 6379:6379 --name redis redis:alpine
+```
+
+Verify it's up:
+
+```bash
+docker exec redis redis-cli ping
+```
+
+Expected output: `PONG`
+
+### Step 4 — Navigate to a Service
 
 ```bash
 cd api-gateway
@@ -549,7 +620,7 @@ cd notification-service
 cd reward-service
 ```
 
-### Step 4 — Build & Run
+### Step 5 — Build & Run
 
 ```bash
 mvn spring-boot:run
@@ -557,7 +628,7 @@ mvn spring-boot:run
 
 > 💡 Start the downstream services first, then the **api-gateway** last, so its routes have something to forward to. Once running, send requests to the Gateway's port instead of each service's individual port.
 
-### Step 5 — Access H2 Console *(Optional)*
+### Step 6 — Access H2 Console *(Optional)*
 
 ```
 URL:      http://localhost:8080/h2-console
@@ -694,15 +765,23 @@ Content-Type: application/json
 
 ---
 
-### Notification Service *(Stage 4)*
+### Notification Service — Base URL: `/api/notifications` *(Stage 4/5)*
 
-The Notification Service has no public REST endpoints yet — it operates purely as a **Kafka consumer**, listening on the `txn-initiated` topic and persisting a notification record for each transaction event it receives. REST endpoints to fetch notification history are planned for a future stage.
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| — | `/api/notifications/**` | Routed through the Gateway (rate-limited); primary role is still as a Kafka consumer on `txn-initiated` | ✅ |
+
+> The Notification Service is primarily event-driven (Kafka consumer), but its route is also registered at the Gateway for future REST endpoints (e.g. fetching notification history).
 
 ---
 
-### Reward Service *(Stage 4)*
+### Reward Service — Base URL: `/api/rewards` *(Stage 4/5)*
 
-Like the Notification Service, the Reward Service has no public REST endpoints — it runs as a standalone **Kafka consumer** on the `txn-initiated` topic, persisting a `Reward` record for every transaction it consumes. REST endpoints to fetch reward history are planned for a future stage.
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| — | `/api/rewards/**` | Routed through the Gateway (rate-limited); primary role is still as a Kafka consumer on `txn-initiated` | ✅ |
+
+> The Reward Service is primarily event-driven (Kafka consumer), but its route is also registered at the Gateway for future REST endpoints (e.g. fetching reward history).
 
 ---
 
@@ -732,6 +811,9 @@ Like the Notification Service, the Reward Service has no public REST endpoints �
 ### 🎁 Kafka Event Processing — Transaction → Reward
 ![Kafka Reward Confirmation](assets/kafka-reward-confirmation.png)
 
+### 🚦 Gateway Rate Limiting — 429 Too Many Requests
+![Rate Limiter](assets/rate-limiter.png)
+
 > 📸 Screenshots captured using Postman and IDE run logs. More will be added with each new feature.
 
 ---
@@ -740,7 +822,6 @@ Like the Notification Service, the Reward Service has no public REST endpoints �
 
 | Service / Feature | Responsibility |
 |---------|---------------|
-| API Gateway — Rate Limiting | Throttle requests per client at the Gateway layer (pending for Stage 5) |
 | Wallet Service | Balance management, top-up |
 | Service Discovery (Eureka) | Dynamic service registration & lookup |
 
