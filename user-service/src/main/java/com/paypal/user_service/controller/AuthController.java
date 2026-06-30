@@ -5,56 +5,68 @@ import com.paypal.user_service.dto.LoginRequest;
 import com.paypal.user_service.dto.SignupRequest;
 import com.paypal.user_service.entity.User;
 import com.paypal.user_service.repository.UserRepository;
+import com.paypal.user_service.service.UserService;
 import com.paypal.user_service.util.JWTUtil;
-import jakarta.servlet.http.HttpServletResponse;
 import org.apache.coyote.Response;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.web.bind.annotation.*;
+
 
 @RestController
 @RequestMapping("/auth")
+@Tag(name = "User API", description = "Operations related to users")
 public class AuthController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JWTUtil jwtUtil;
+    private final UserService userService;
 
-    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, JWTUtil jwtUtil) {
+    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, JWTUtil jwtUtil, UserService userService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
+        this.userService = userService;
     }
 
     @PostMapping("/signup")
+    @Operation(summary = "Sign up a new user", description = "Creates a new user and wallet")
     public ResponseEntity<?> signup(@RequestBody SignupRequest request) {
-
-
-        Optional<User> existingUser = userRepository.findByEmail(request.getEmail());
-
-        if (existingUser.isPresent()) {
-            System.out.println(">>> User already exists");
-            return ResponseEntity.badRequest().body("User already exists");
+        // 1. Check if user already exists
+        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+            return ResponseEntity
+                    .badRequest()
+                    .body("⚠️ User already exists");
         }
 
+        // 2. Map request -> User entity
         User user = new User();
         user.setName(request.getName());
         user.setEmail(request.getEmail());
-        user.setRole("USER");
+        user.setRole("ROLE_USER"); // ✅ Better for Spring Security
         user.setPassword(passwordEncoder.encode(request.getPassword()));
 
-        userRepository.save(user);
+        // 3. Use service to create user + wallet
+        User savedUser = userService.createUser(user);
 
-        System.out.println(">>> Returning success response");
-
-        return ResponseEntity.ok("User registered successfully");
+        // 4. Return safe response
+        return ResponseEntity.ok("✅ User registered successfully with ID: " + savedUser.getId());
     }
 
+
+
     @PostMapping("/login")
+    @Operation(summary = "Login a user", description = "login")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
         Optional<User> userOpt = userRepository.findByEmail(request.getEmail());
         if (userOpt.isEmpty()) {
@@ -71,5 +83,4 @@ public class AuthController {
 
         return ResponseEntity.ok(new JwtResponse(token));
     }
-
 }

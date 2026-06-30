@@ -19,3 +19,7 @@ spring:
 
   jwt:
     secret: my-super-secret-key-that-you-never-share
+
+  cloud:
+    compatibility-verifier:
+      enabled: false

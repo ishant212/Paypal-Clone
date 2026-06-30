@@ -8,7 +8,7 @@
 ![JWT](https://img.shields.io/badge/Auth-JWT-orange?style=flat-square)
 ![H2](https://img.shields.io/badge/Database-H2_In--Memory-yellow?style=flat-square)
 ![Maven](https://img.shields.io/badge/Build-Maven-orange?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Stage_5_Complete-purple?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Stage_6_In_Progress-purple?style=flat-square)
 ![Kafka](https://img.shields.io/badge/Messaging-Apache_Kafka-black?style=flat-square)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square)
 ![Gateway](https://img.shields.io/badge/API_Gateway-Spring_Cloud_Gateway-6DB33F?style=flat-square)
@@ -18,8 +18,7 @@
 
 ## 📌 Project Status
 
-> **Stage 5 — API Gateway with JWT Auth & Rate Limiting (Complete)**
-> This project is under active development. The README is updated alongside each development stage.
+> **Stage 6 — Wallet Service (In Progress)**
 
 | Stage | Milestone | Status |
 |-------|-----------|--------|
@@ -28,7 +27,7 @@
 | 3 | Transaction Service | ✅ Complete |
 | 4 | Notification Service + Reward Service (Kafka Event-Driven Messaging) | ✅ Complete |
 | 5 | API Gateway (routing + JWT auth + Redis rate limiting) | ✅ Complete |
-| 6 | Wallet & Balance Management | 🔜 Upcoming |
+| 6 | Wallet Service (balance, credit/debit, holds) | 🔄 In Progress |
 | 7 | Docker & Kubernetes Deployment | 🔜 Upcoming |
 
 ---
@@ -52,7 +51,7 @@
 
 ## 1. Overview
 
-A backend system inspired by PayPal, designed to demonstrate real-world **microservices architecture** using Spring Boot. The platform handles user management, JWT-based authentication, and financial transactions — built with scalability, security, and clean design as core principles.
+A backend system inspired by PayPal, demonstrating real-world **microservices architecture** using Spring Boot — user management, JWT auth, transactions, wallets, and event-driven notifications/rewards.
 
 Each service is independently deployable, loosely coupled, and communicates over REST for synchronous flows and **Apache Kafka** for asynchronous, event-driven communication (e.g. transaction → notification/reward events). All client traffic now enters through a central **API Gateway**, which routes requests to the appropriate downstream service.
 
@@ -140,6 +139,21 @@ A single entry point that routes all client requests to the appropriate downstre
 - **Redis-backed rate limiting** — every route (`user-service`, `transaction-service`, `reward-service`, `notification-service`) is protected by Spring Cloud Gateway's `RequestRateLimiter` filter, backed by Redis
 - Custom `KeyResolver` (`userKeyResolver`) rate-limits per authenticated user via the `X-User-Id` header, falling back to client IP address when the header is absent
 - Verified end-to-end: rapid-fire requests succeed until the configured burst capacity, then receive `429 Too Many Requests` from the Gateway
+
+---
+
+### 👛 Wallet Service *(Stage 6 — In Progress)*
+
+- Wallet entity: `userId`, `currency`, `balance`, `availableBalance`
+- `POST /api/v1/wallets` — create wallet
+- `POST /api/v1/wallets/credit` / `/debit` — adjust balance, logs each as a `Transaction` record
+- `GET /api/v1/wallets/{userId}` — fetch wallet
+- **Hold/capture/release flow** for pending funds:
+  - `POST /hold` — reserve funds (`availableBalance` reduced, `balance` untouched)
+  - `POST /capture` — finalize a hold (deducts from `balance`)
+  - `POST /release/{holdReference}` — cancel a hold, restores `availableBalance`
+- `HoldExpiryScheduler` for auto-expiring stale holds
+- Custom exceptions: `InsufficientFundsException`, `NotFoundException`
 
 ---
 
@@ -450,7 +464,7 @@ Database (H2 / MySQL) → Persistence
 │  Transaction Svc  ← Stage 3 ✅  │
 │  Notification Svc ← Stage 4 ✅  │
 │  Reward Svc       ← Stage 4 ✅  │
-│  Wallet Service   ← Stage 6     │
+│  Wallet Service   ← Stage 6 🔄  │
 └─────────────────────────────────┘
     ↓
 [Message Broker - Apache Kafka] ← Stage 4 ✅
@@ -562,6 +576,22 @@ paypal-clone/
 │   │   └── test/
 │   └── pom.xml
 │
+├── wallet-service/                    ← Stage 6
+│   ├── src/
+│   │   ├── main/
+│   │   │   ├── java/com/paypal/wallet_service/
+│   │   │   │   ├── controller/        # WalletController
+│   │   │   │   ├── dto/               # CreateWalletRequest, CreditRequest, DebitRequest, HoldRequest, etc.
+│   │   │   │   ├── entity/            # Wallet, WalletHold, Transaction
+│   │   │   │   ├── exception/         # InsufficientFundsException, NotFoundException
+│   │   │   │   ├── repository/        # WalletRepository, WalletHoldRepository, TransactionRepository
+│   │   │   │   ├── scheduler/         # HoldExpiryScheduler
+│   │   │   │   └── service/           # WalletService
+│   │   │   └── resources/
+│   │   │       └── application.yml
+│   │   └── test/
+│   └── pom.xml
+│
 └── README.md
 ```
 
@@ -618,6 +648,8 @@ cd transaction-service
 cd notification-service
 # or
 cd reward-service
+# or
+cd wallet-service
 ```
 
 ### Step 5 — Build & Run
@@ -785,6 +817,20 @@ Content-Type: application/json
 
 ---
 
+### Wallet Service — Base URL: `/api/v1/wallets` *(Stage 6)*
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/wallets` | Create wallet |
+| `POST` | `/api/v1/wallets/credit` | Credit balance |
+| `POST` | `/api/v1/wallets/debit` | Debit balance (fails if insufficient funds) |
+| `GET` | `/api/v1/wallets/{userId}` | Fetch wallet |
+| `POST` | `/api/v1/wallets/hold` | Reserve funds (hold) |
+| `POST` | `/api/v1/wallets/capture` | Finalize a hold |
+| `POST` | `/api/v1/wallets/release/{holdReference}` | Cancel a hold, release funds |
+
+---
+
 ## 10. Screenshots
 
 ### 🟢 Signup — POST `/auth/signup`
@@ -822,7 +868,7 @@ Content-Type: application/json
 
 | Service / Feature | Responsibility |
 |---------|---------------|
-| Wallet Service | Balance management, top-up |
+| Wallet Service — Gateway routing | Route `/api/v1/wallets/**` through API Gateway |
 | Service Discovery (Eureka) | Dynamic service registration & lookup |
 
 ---  
