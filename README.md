@@ -8,17 +8,18 @@
 ![JWT](https://img.shields.io/badge/Auth-JWT-orange?style=flat-square)
 ![H2](https://img.shields.io/badge/Database-H2_In--Memory-yellow?style=flat-square)
 ![Maven](https://img.shields.io/badge/Build-Maven-orange?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Stage_6_In_Progress-purple?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Backend_Complete-brightgreen?style=flat-square)
 ![Kafka](https://img.shields.io/badge/Messaging-Apache_Kafka-black?style=flat-square)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square)
 ![Gateway](https://img.shields.io/badge/API_Gateway-Spring_Cloud_Gateway-6DB33F?style=flat-square)
 ![Redis](https://img.shields.io/badge/Rate_Limiting-Redis-DC382D?style=flat-square)
+![Wallet](https://img.shields.io/badge/Wallet-Hold_Capture_Release-9b59b6?style=flat-square)
 
 ---
 
 ## 📌 Project Status
 
-> **Stage 6 — Wallet Service (In Progress)**
+> ✅ **Backend feature-complete (for now)** — all core microservices are built and wired end-to-end, including real fund movement through the Wallet Service. Stage 7 (Docker/Kubernetes deployment) is the next milestone whenever this project is picked back up.
 
 | Stage | Milestone | Status |
 |-------|-----------|--------|
@@ -27,7 +28,7 @@
 | 3 | Transaction Service | ✅ Complete |
 | 4 | Notification Service + Reward Service (Kafka Event-Driven Messaging) | ✅ Complete |
 | 5 | API Gateway (routing + JWT auth + Redis rate limiting) | ✅ Complete |
-| 6 | Wallet Service (balance, credit/debit, holds) | 🔄 In Progress |
+| 6 | Wallet Service (balance, credit/debit, holds) + Transaction integration | ✅ Complete |
 | 7 | Docker & Kubernetes Deployment | 🔜 Upcoming |
 
 ---
@@ -44,7 +45,7 @@
 8. [How to Run](#8-how-to-run)
 9. [API Endpoints](#9-api-endpoints)
 10. [Screenshots](#10-screenshots)
-11. [Planned Microservices](#11-planned-microservices)
+11. [Future Enhancements](#11-future-enhancements)
 12. [Contributors](#12-contributors)
 
 ---
@@ -53,144 +54,75 @@
 
 A backend system inspired by PayPal, demonstrating real-world **microservices architecture** using Spring Boot — user management, JWT auth, transactions, wallets, and event-driven notifications/rewards.
 
-Each service is independently deployable, loosely coupled, and communicates over REST for synchronous flows and **Apache Kafka** for asynchronous, event-driven communication (e.g. transaction → notification/reward events). All client traffic now enters through a central **API Gateway**, which routes requests to the appropriate downstream service.
+Each service is independently deployable and loosely coupled. Communication is synchronous REST for direct calls (e.g. Transaction Service → Wallet Service for fund movement) and **Apache Kafka** for async events (transaction → notification/reward). All client traffic enters through a central **API Gateway**, which handles JWT auth and rate limiting before routing downstream.
 
 ---
 
 ## 2. Current Microservices
 
-### 👤 User Service *(Stage 1 & 2)*
+### 👤 User Service *(Stage 1 & 2 — Complete)*
 
-Handles core user lifecycle management and authentication.
-
-**Stage 1 Features:**
-- Create a new user
-- Fetch user by ID
-- Fetch all users
-- Update user details
-- Custom exception handling for cleaner error responses
-- Spring Security configuration (foundation for JWT)
-
-**Stage 2 Features:**
-- Signup API with BCrypt password hashing
-- Login API with JWT token generation
-- JWT request filter for stateless authentication
-- Role-based claims inside JWT payload
-- Spring Security context population per request
-- Stateless session management
+- CRUD endpoints (create, fetch by ID, fetch all, update) with custom exception handling
+- Signup with BCrypt password hashing, login with JWT generation
+- Stateless auth via `JWTRequestFilter` + Spring Security context, role-based claims in the token
 
 ---
 
 ### 💸 Transaction Service *(Stage 3 — Complete)*
 
-Handles the creation and persistence of financial transactions between users.
+Creates and persists transactions between users — now synchronously backed by the **Wallet Service** for real fund movement instead of just recording a status.
 
-**Stage 3 Features:**
-- `Transaction` entity with fields: `id`, `senderId`, `receiverId`, `amount`, `timestamp`, `status`
-- JPA annotations: `@Entity`, `@Table`, `@Id`, `@GeneratedValue`, `@Column`
-- Amount validation using `@Positive` with Spring Validation dependency
-- Automatic `timestamp` population via `@PrePersist` using `LocalDateTime.now()`
-- Default `status` set to `"PENDING"` on pre-persist
-- `POST /api/transactions/create` endpoint — creates and persists a transaction, returns full transaction object
-- Clean column naming (`sender_id`, `receiver_id`) to accurately reflect stored data
-- Hibernate/H2 debugging — traced and fixed `NULL not allowed` constraint violations caused by incorrect getter/setter naming and JSON mapping issues
+- `Transaction` entity (`senderId`, `receiverId`, `amount`, `timestamp`, `status`) with `@Positive` amount validation and auto-populated timestamp/status on `@PrePersist`
+- `POST /api/transactions/create` saves the transaction as `PENDING`, then calls `WalletClient` to **hold** funds on the sender's wallet
+- On success the hold is **captured** (sender debited, receiver credited) and the transaction is marked `SUCCESS`; on any failure (e.g. an invalid receiver) the hold is **released** and the transaction is marked `FAILED`
+- Publishes a Kafka event on the final outcome for Notification/Reward services to consume
 
 ---
 
 ### 📣 Notification Service *(Stage 4 — Complete)*
 
-Consumes transaction events asynchronously and generates notifications, decoupled from the Transaction Service via Kafka.
-
-**Stage 4 Features:**
-- Apache Kafka integration for event-driven communication between Transaction Service and Notification Service
-- `KafkaEventProducer` in Transaction Service publishes transaction events to the `txn-initiated` topic after successful transaction creation
-- `NotificationConsumer` in Notification Service listens to `txn-initiated` via `@KafkaListener` (`groupId: notification-group`)
-- Transaction events are automatically deserialized into `Transaction` objects on consumption
-- Notifications are generated and persisted using Spring Data JPA + H2 whenever a transaction completes
-- Logging added for Kafka publish confirmation and consumption tracking
-- Kafka and Zookeeper containerized via Docker Compose for local development
+- `NotificationConsumer` listens to the `txn-initiated` topic (`groupId: notification-group`)
+- Deserializes events into `Transaction` objects and persists a notification via Spring Data JPA + H2
+- Runs alongside Kafka/Zookeeper, containerized via Docker Compose
 
 ---
 
 ### 🎁 Reward Service *(Stage 4 — Complete)*
 
-A second independent consumer of transaction events, implemented by following [this Spring Kafka microservices tutorial](https://www.youtube.com/watch?v=yDW3YvgfkoY&list=PLaihB5c0gLqZNjSIGHak3Fg_o-Sp1V_IU&index=8&t=6s). Awards a reward record for every completed transaction, fully decoupled from both the Transaction and Notification services.
+Built by following [this Spring Kafka microservices tutorial](https://www.youtube.com/watch?v=yDW3YvgfkoY&list=PLaihB5c0gLqZNjSIGHak3Fg_o-Sp1V_IU&index=8&t=6s).
 
-**Stage 4 Features:**
-- `RewardServiceApplication` runs as its own Spring Boot service, consuming from the same `txn-initiated` Kafka topic
-- Dedicated `@KafkaListener` (separate consumer group) deserializes incoming `Transaction` events
-- `Reward` entity persisted via Spring Data JPA + H2 on successful event consumption
-- Verified end-to-end: a transaction created via Postman triggers Kafka delivery, with service logs confirming `Reward saved: com.paypal.reward_service.entity.Reward@...`
-- Demonstrates Kafka's pub-sub model — both Notification Service and Reward Service independently consume the same event stream without coupling to each other
+- Own `@KafkaListener` + consumer group on `txn-initiated`, fully decoupled from the Notification Service
+- Persists a `Reward` entity for every completed transaction via Spring Data JPA + H2
+- Verified end-to-end: a Postman-triggered transaction produces a logged `Reward saved: ...` entry
 
 ---
 
 ### 🚪 API Gateway *(Stage 5 — Complete)*
 
-A single entry point that routes all client requests to the appropriate downstream microservice, built by following [this Spring Cloud Gateway tutorial](https://www.youtube.com/watch?v=e02QT3UGsHE&list=PLaihB5c0gLqZNjSIGHak3Fg_o-Sp1V_IU&index=10&t=1534s).
+Single entry point for all client traffic, built by following [this Spring Cloud Gateway tutorial](https://www.youtube.com/watch?v=e02QT3UGsHE&list=PLaihB5c0gLqZNjSIGHak3Fg_o-Sp1V_IU&index=10&t=1534s).
 
-**Stage 5 Features:**
-- Spring Cloud Gateway configured as the single entry point for all client traffic
-- Route definitions mapping incoming paths to User Service, Transaction Service, Notification Service, and Reward Service
-- Clients now hit the Gateway port instead of calling each service directly
-- Verified routing works end-to-end across all downstream services
-- **Centralized JWT authentication** — `JwtAuthFilter` validates the token on every incoming request *before* it's routed downstream, with `JwtUtil` handling token parsing/validation logic
-- Unauthenticated or invalid-token requests are rejected at the Gateway, so downstream services no longer need to repeat JWT checks
-- **Redis-backed rate limiting** — every route (`user-service`, `transaction-service`, `reward-service`, `notification-service`) is protected by Spring Cloud Gateway's `RequestRateLimiter` filter, backed by Redis
-- Custom `KeyResolver` (`userKeyResolver`) rate-limits per authenticated user via the `X-User-Id` header, falling back to client IP address when the header is absent
-- Verified end-to-end: rapid-fire requests succeed until the configured burst capacity, then receive `429 Too Many Requests` from the Gateway
+- Routes requests to User, Transaction, Notification, and Reward services
+- **Centralized JWT auth** via `JwtAuthFilter` + `JwtUtil` — invalid/missing tokens are rejected before reaching downstream services (`/auth/signup`, `/auth/login` excluded)
+- **Redis-backed rate limiting** via `RequestRateLimiter`, keyed per user (`X-User-Id`) with IP fallback through a custom `KeyResolver`
+- Verified: rapid-fire requests succeed up to the configured burst capacity, then return `429 Too Many Requests`
 
 ---
 
-### 👛 Wallet Service *(Stage 6 — In Progress)*
+### 👛 Wallet Service *(Stage 6 — Complete)*
+
+Manages user balances and now sits in the critical path of every transaction.
 
 - Wallet entity: `userId`, `currency`, `balance`, `availableBalance`
-- `POST /api/v1/wallets` — create wallet
-- `POST /api/v1/wallets/credit` / `/debit` — adjust balance, logs each as a `Transaction` record
-- `GET /api/v1/wallets/{userId}` — fetch wallet
-- **Hold/capture/release flow** for pending funds:
-  - `POST /hold` — reserve funds (`availableBalance` reduced, `balance` untouched)
-  - `POST /capture` — finalize a hold (deducts from `balance`)
-  - `POST /release/{holdReference}` — cancel a hold, restores `availableBalance`
-- `HoldExpiryScheduler` for auto-expiring stale holds
-- Custom exceptions: `InsufficientFundsException`, `NotFoundException`
+- `POST /api/v1/wallets`, `/credit`, `/debit`, `GET /{userId}` for direct wallet management
+- **Hold → capture/release flow**: `POST /hold` reserves funds (`availableBalance` reduced), `POST /capture` finalizes a hold (deducts `balance`), `POST /release/{holdReference}` cancels a hold and restores `availableBalance`
+- `HoldExpiryScheduler` auto-expires stale holds; custom `InsufficientFundsException` / `NotFoundException` for clean error handling
+- **Integrated with the Transaction Service** via a `WalletClient` REST client + `TransferRequest` DTO — every transaction now places, then captures or releases, a real hold before being marked `SUCCESS`/`FAILED`
 
 ---
 
 ## 3. Kafka-Based Event-Driven Microservices *(Stage 4)*
 
-Implemented asynchronous, pub-sub communication from the Transaction Service to two independent downstream consumers — Notification Service and Reward Service — using Apache Kafka.
-
-### Features
-
-- Transaction Service publishes transaction events to a single Kafka topic (`txn-initiated`)
-- **Notification Service** consumes events via `@KafkaListener` (`notification-group`) and persists a notification record
-- **Reward Service** independently consumes the *same* topic via its own consumer group and persists a reward record
-- Transaction details are automatically deserialized into a `Transaction` object on each consumer
-- Decoupled microservice communication using event-driven architecture — neither consumer is aware of the other
-
-### Components Added
-
-**Transaction Service**
-- Configured Kafka Producer using Spring Kafka
-- Created `KafkaEventProducer` to publish transaction events
-- Published transaction details after successful transaction creation
-- Added logging for Kafka event publishing and delivery confirmation
-
-**Notification Service**
-- Configured Kafka Consumer using Spring Kafka
-- Created `NotificationConsumer` with `@KafkaListener`
-- Consumes events from the `txn-initiated` topic
-- Generates notification messages automatically
-- Persists notifications using Spring Data JPA and H2 Database
-
-**Reward Service**
-- Configured as an independent Spring Boot microservice with its own Kafka consumer
-- Consumes the same `txn-initiated` topic with a dedicated consumer group
-- Persists a `Reward` entity for every transaction event received
-- Built by following an external Spring Kafka microservices tutorial, adapted to this project's `Transaction` event schema
-
-### Kafka Configuration
+Transaction Service publishes one event per transaction to the `txn-initiated` Kafka topic; Notification Service and Reward Service each consume it independently via their own consumer groups, with neither aware of the other.
 
 **Producer**
 ```java
@@ -199,151 +131,37 @@ kafkaTemplate.send("txn-initiated", transaction);
 
 **Consumer**
 ```java
-@KafkaListener(
-    topics = "txn-initiated",
-    groupId = "notification-group"
-)
+@KafkaListener(topics = "txn-initiated", groupId = "notification-group")
 public void consumeTransaction(Transaction transaction)
 ```
 
-### Event Flow
-
+**Event Flow**
 ```
-Client Request
-      ↓
-Transaction Service
-      ↓
-Save Transaction
-      ↓
-Publish Event to Kafka Topic (txn-initiated)
-      ↓
-Kafka Broker
-      ↓
-      ├──→ Notification Service Consumer → Generate Notification → Save Notification
-      │
-      └──→ Reward Service Consumer       → Generate Reward       → Save Reward
+Transaction Service → Save + Publish → Kafka (txn-initiated)
+                                            ├──→ Notification Service → Save Notification
+                                            └──→ Reward Service       → Save Reward
 ```
 
-### Docker Setup
-
-Kafka and Zookeeper were containerized using Docker Compose.
-
-```yaml
-services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.1
-
-  kafka:
-    image: confluentinc/cp-kafka:7.4.1
-```
-
-Started using:
-
-```bash
-docker compose up -d
-```
-
-### Verification
-
-**Transaction Creation**
-
-A transaction was successfully created through the Transaction Service API.
-
-Example request:
-```json
-{
-  "senderId": 3,
-  "receiverId": 2,
-  "amount": 25000.125
-}
-```
-
-Example response:
-```json
-{
-  "id": 1,
-  "senderId": 3,
-  "receiverId": 2,
-  "amount": 25000.125,
-  "timestamp": "2026-06-26T23:31:06.6679027",
-  "status": "SUCCESS"
-}
-```
-
-**Kafka Event Processing — Notification Service**
-
-Logs confirm:
-- Transaction saved successfully
-- Event published to Kafka
-- Notification Service consumed the event
-- Notification persisted in the database
-
-Example logs:
-```text
-Kafka message sent successfully!
-Received transaction: Transaction(id=4,...)
-Notification saved successfully
-```
-
-**Kafka Event Processing — Reward Service**
-
-The same transaction event was independently consumed by the Reward Service, confirming Kafka's pub-sub fan-out across multiple consumer groups.
-
-Example log:
-```text
-Reward saved: com.paypal.reward_service.entity.Reward@4271a667
-```
+Kafka & Zookeeper run via Docker Compose (`docker compose up -d`). Verified end-to-end: a transaction created via Postman triggers both consumers, with logs confirming `Notification saved successfully` and `Reward saved: ...` independently.
 
 ---
 
 ## 4. API Gateway *(Stage 5)*
 
-A centralized **Spring Cloud Gateway** service was introduced as the single entry point for all client requests, built by following [this tutorial](https://www.youtube.com/watch?v=e02QT3UGsHE&list=PLaihB5c0gLqZNjSIGHak3Fg_o-Sp1V_IU&index=10&t=1534s).
+A centralized **Spring Cloud Gateway** service fronts all client traffic with JWT auth and rate limiting before routing downstream.
 
-### Features
-
-- All incoming client requests now route through the Gateway instead of hitting individual services directly
-- Route definitions map URL paths to the correct downstream microservice (User, Transaction, Notification, Reward)
-- **Centralized JWT authentication** — `JwtAuthFilter` intercepts every request at the Gateway and validates the JWT via `JwtUtil` *before* forwarding it downstream
-- Requests with a missing or invalid token are rejected at the Gateway itself, so downstream services no longer duplicate auth logic
-- **Redis-backed rate limiting** on every route via Spring Cloud Gateway's `RequestRateLimiter` filter
-- Custom `KeyResolver` rate-limits per user (`X-User-Id` header) with IP-address fallback
-- `DedupeResponseHeader` default filter applied globally to clean up duplicate CORS headers across routes
-
-### Gateway-Level JWT Authentication
-
+**JWT Authentication**
 ```
-Incoming Request
-      ↓
-JwtAuthFilter (Gateway)
-      ↓
-Extract token from Authorization header
-      ↓
-JwtUtil → Validate signature & expiry
-      ↓
-   ┌──────────────┴──────────────┐
-   ↓                              ↓
-Valid token                  Invalid / missing token
-   ↓                              ↓
-Forward to downstream         401 Unauthorized
-service via route             (request blocked at Gateway)
+Request → JwtAuthFilter → extract + validate token (JwtUtil)
+   ├─ valid             → forward to downstream service
+   └─ invalid / missing → 401 Unauthorized
 ```
 
-Components:
-- `filters/JwtAuthFilter` — Spring Cloud Gateway global/route filter that runs on every request
-- `util/JwtUtil` — shared token parsing & validation logic (signature check, expiry check)
+**Redis-Backed Rate Limiting** — backed by `spring-boot-starter-data-redis-reactive` + Lettuce, run as a standalone container:
+```bash
+docker run -d -p 6379:6379 --name redis redis:alpine
+```
 
-### Redis-Backed Rate Limiting
-
-Every route is protected by Spring Cloud Gateway's built-in `RequestRateLimiter` filter, backed by Redis (`spring-boot-starter-data-redis-reactive` + Lettuce).
-
-> 🐳 Unlike Kafka/Zookeeper (which run via `docker-compose.yml`), Redis runs as a **standalone container**, started separately:
-> ```bash
-> docker run -d -p 6379:6379 --name redis redis:alpine
-> ```
-> Verified with `docker exec redis redis-cli ping` → `PONG`
-
-**Configuration (applied per route):**
 ```yaml
 filters:
   - name: RequestRateLimiter
@@ -354,121 +172,72 @@ filters:
       redis-rate-limiter.requestedTokens: 1
 ```
 
-- **replenishRate: 10** — steady-state tokens refilled per second
-- **burstCapacity: 20** — max tokens (requests) allowed in a burst before throttling kicks in
-- **requestedTokens: 1** — tokens consumed per request
-
-**Custom Key Resolver:**
 ```java
 @Bean
 public KeyResolver userKeyResolver(){
     return exchange -> {
         String userId = exchange.getRequest().getHeaders().getFirst("X-User-Id");
-        if (userId != null) {
-            return Mono.just(userId);
-        }
-        // fallback via IP Address
+        if (userId != null) return Mono.just(userId);
         return Mono.just(exchange.getRequest().getRemoteAddress().getAddress().getHostAddress());
     };
 }
 ```
 
-Rate limiting is keyed per user (via `X-User-Id`) so one user's traffic can't exhaust another user's quota; if the header is missing, it falls back to limiting per client IP.
-
-**Verification:**
-
-A PowerShell script fired rapid sequential requests against the Transaction Service through the Gateway. Requests succeeded normally up through request #19, then request #20 onward returned `429 Too Many Requests`, confirming the burst capacity (20) and rate limiter were working as configured.
-
-### Routing Flow
-
+**Routing**
 ```
-Client Request
-      ↓
-API Gateway :8080 (single entry point)
-      ↓
-JwtAuthFilter → validate token (see above)
-      ↓ (valid)
-      ↓
-RequestRateLimiter → check Redis token bucket (see above)
-      ↓ (under limit)
-      ├──→ /auth/**              → User Service          (localhost:8081)
-      ├──→ /api/transactions/**  → Transaction Service    (localhost:8082)
-      ├──→ /api/notifications/** → Notification Service   (localhost:8084)
-      └──→ /api/rewards/**       → Reward Service          (localhost:8085)
+Client → API Gateway :8080 → JwtAuthFilter → RequestRateLimiter
+      ├──→ /auth/**              → User Service          (:8081)
+      ├──→ /api/transactions/**  → Transaction Service    (:8082)
+      ├──→ /api/notifications/** → Notification Service   (:8084)
+      └──→ /api/rewards/**       → Reward Service          (:8085)
 ```
-
-> Note: `/auth/signup` and `/auth/login` are excluded from JWT validation at the Gateway, since users don't have a token yet at that point. All four routes — User, Transaction, Notification, and Reward — are rate-limited identically via the shared `userKeyResolver`.
-
-### What's Next for Stage 5
-
-- [x] Routing to all downstream services
-- [x] Centralized JWT authentication
-- [x] Redis-backed rate limiting
-- [ ] Add Eureka-based service discovery so routes don't need hardcoded service URLs
+> Wallet Service (`:8088`) is currently called directly — Gateway routing for it is a planned enhancement (see [§11](#11-future-enhancements)).
 
 ---
 
 ## 5. Architecture
 
-### JWT Authentication Flow
-
+**JWT Authentication Flow**
 ```
-Signup → Store User (BCrypt password)
-Login  → Validate credentials → Generate JWT
-       → Send JWT in Authorization header
-       → JWTRequestFilter validates token
-       → Populate SecurityContext
-       → Access protected endpoints
+Signup → Store User (BCrypt) → Login → Validate → Issue JWT
+       → Authorization: Bearer <token> → JWTRequestFilter validates → SecurityContext populated
 ```
 
-### Transaction Flow *(Stage 3)*
-
+**Transaction Flow — with Wallet Integration *(Stage 3 & 6)***
 ```
 POST /api/transactions/create
        ↓
-TransactionController
+Save Transaction → status = PENDING
        ↓
-TransactionService       → Validates input (amount > 0)
+WalletClient → POST /hold (reserve sender's funds)
        ↓
-@PrePersist              → Sets timestamp = now(), status = "PENDING"
-       ↓
-TransactionRepository    → Persists to H2 (MySQL in later stage)
-       ↓
-Response: { id, senderId, receiverId, amount, timestamp, status }
+   ┌────────────────┴────────────────┐
+   ↓                                   ↓
+Hold succeeds                      Hold fails (e.g. invalid receiver)
+   ↓                                   ↓
+WalletClient → /capture              WalletClient → /release/{holdReference}
+(sender debited, receiver credited)        ↓
+   ↓                                status = FAILED
+status = SUCCESS
+   ↓
+Publish event → Kafka (txn-initiated)
 ```
 
-### Layered Architecture (Per Service)
-
+**Layered Architecture (Per Service)**
 ```
-Client Request
-     ↓
-Controller Layer      → Handles HTTP requests & responses
-     ↓
-Service Layer         → Business logic
-     ↓
-Repository Layer      → Database operations (Spring Data JPA)
-     ↓
-Database (H2 / MySQL) → Persistence
+Controller → Service → Repository → Database (H2 / MySQL)
 ```
 
-### System Architecture *(Evolves Each Stage)*
-
+**System Architecture**
 ```
-[Clients]
+[Clients] → [API Gateway] (JWT + rate limiting)
     ↓
-[API Gateway] ← Stage 5 ✅ (routing + JWT auth + Redis rate limiting)
+┌───────────────────────────────────┐
+│ User • Auth • Transaction          │
+│ Notification • Reward • Wallet     │  ← all ✅ complete
+└───────────────────────────────────┘
     ↓
-┌─────────────────────────────────┐
-│  User Service     ← Stage 1 ✅  │
-│  Auth (JWT)       ← Stage 2 ✅  │
-│  Transaction Svc  ← Stage 3 ✅  │
-│  Notification Svc ← Stage 4 ✅  │
-│  Reward Svc       ← Stage 4 ✅  │
-│  Wallet Service   ← Stage 6 🔄  │
-└─────────────────────────────────┘
-    ↓
-[Message Broker - Apache Kafka] ← Stage 4 ✅
-[Redis - Rate Limiting Store]   ← Stage 5 ✅
+[Kafka — async events]      [Redis — rate-limit store]
 ```
 
 ---
@@ -483,18 +252,15 @@ Database (H2 / MySQL) → Persistence
 | Spring Security | Auth & authorization | ✅ Active |
 | JJWT 0.12.x | JWT generation & validation | ✅ Active |
 | Spring Validation | Request validation (`@Positive`, etc.) | ✅ Active |
-| Spring Kafka | Event-driven messaging (producer/consumer) — used by Notification Service & Reward Service | ✅ Active |
-| Apache Kafka | Async message broker | ✅ Active |
-| Zookeeper | Kafka cluster coordination | ✅ Active |
-| Spring Cloud Gateway | API Gateway — centralized routing + JWT auth filter | ✅ Active |
-| Redis (Spring Data Redis Reactive + Lettuce) | Rate limiter token bucket store | ✅ Active |
-| Docker Compose | Local Kafka/Zookeeper orchestration | ✅ Active |
-| Docker (standalone container) | Local Redis instance for rate limiting | ✅ Active |
+| Spring Kafka / Apache Kafka / Zookeeper | Event-driven messaging | ✅ Active |
+| Spring Cloud Gateway | Centralized routing + JWT auth filter | ✅ Active |
+| Redis (Reactive + Lettuce) | Rate limiter token bucket store | ✅ Active |
+| Docker Compose / standalone Docker | Local Kafka/Zookeeper + Redis | ✅ Active |
 | H2 Database | In-memory DB (dev) | ✅ Active |
 | BCrypt | Password hashing | ✅ Active |
-| MySQL / PostgreSQL | Production DB | 🔜 Upcoming |
 | Maven | Build tool | ✅ Active |
-| Eureka | Service discovery | 🔜 Stage 5 |
+| MySQL / PostgreSQL | Production DB | 🔜 Upcoming |
+| Eureka | Service discovery | 🔜 Planned |
 | Kubernetes | Orchestration | 🔜 Stage 7 |
 
 ---
@@ -503,322 +269,115 @@ Database (H2 / MySQL) → Persistence
 
 ```
 paypal-clone/
+├── assets/                          # Screenshots — see §10
+├── docker-compose.yml                # Kafka + Zookeeper
 │
-├── assets/                            # Screenshots
-│
-├── docker-compose.yml                 # Kafka + Zookeeper setup ← Stage 4
-│
-├── api-gateway/                       ← Stage 5
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/paypal/api_gateway/
-│   │   │   │   ├── config/            # RateLimitConfig (KeyResolver bean)
-│   │   │   │   ├── filters/           # JwtAuthFilter
-│   │   │   │   └── util/              # JwtUtil
-│   │   │   └── resources/
-│   │   │       └── application.yml    # Route, JWT & rate-limiter definitions
-│   │   └── test/
-│   └── pom.xml
+├── api-gateway/
+│   └── src/main/java/com/paypal/api_gateway/
+│       ├── config/                   # RateLimitConfig (KeyResolver)
+│       ├── filters/                  # JwtAuthFilter
+│       └── util/                     # JwtUtil
 │
 ├── user-service/
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/paypal/user_service/
-│   │   │   │   ├── controller/        # AuthController, UserController
-│   │   │   │   ├── dto/               # JwtResponse, LoginRequest, SignupRequest
-│   │   │   │   ├── entity/            # User
-│   │   │   │   ├── repository/        # UserRepository
-│   │   │   │   ├── security/          # SecurityConfig
-│   │   │   │   ├── service/           # UserService, UserServiceImpl
-│   │   │   │   └── util/              # JWTUtil, JWTRequestFilter
-│   │   │   └── resources/
-│   │   │       └── application.properties
-│   │   └── test/
-│   └── pom.xml
+│   └── src/main/java/com/paypal/user_service/
+│       └── controller/ dto/ entity/ repository/ security/ service/ util/
 │
 ├── transaction-service/
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/paypal/transaction_service/
-│   │   │   │   ├── controller/        # TransactionController
-│   │   │   │   ├── entity/            # Transaction
-│   │   │   │   ├── kafka/             # KafkaEventProducer ← Stage 4
-│   │   │   │   ├── repository/        # TransactionRepository
-│   │   │   │   └── service/           # TransactionService, TransactionServiceImpl
-│   │   │   └── resources/
-│   │   │       └── application.properties
-│   │   └── test/
-│   └── pom.xml
+│   └── src/main/java/com/paypal/transaction_service/
+│       ├── client/                   # WalletClient — calls Wallet Service (hold/capture/release)
+│       └── controller/ dto/dto/ entity/ kafka/ repository/ service/ util/
 │
-├── notification-service/              ← Stage 4
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/paypal/notification_service/
-│   │   │   │   ├── consumer/          # NotificationConsumer
-│   │   │   │   ├── entity/            # Notification
-│   │   │   │   ├── repository/        # NotificationRepository
-│   │   │   │   └── service/           # NotificationService, NotificationServiceImpl
-│   │   │   └── resources/
-│   │   │       └── application.properties
-│   │   └── test/
-│   └── pom.xml
+├── notification-service/
+│   └── src/main/java/com/paypal/notification_service/
+│       └── consumer/ entity/ repository/ service/
 │
-├── reward-service/                    ← Stage 4
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/paypal/reward_service/
-│   │   │   │   ├── consumer/          # RewardConsumer
-│   │   │   │   ├── entity/            # Reward
-│   │   │   │   ├── repository/        # RewardRepository
-│   │   │   │   └── service/           # RewardService, RewardServiceImpl
-│   │   │   └── resources/
-│   │   │       └── application.properties
-│   │   └── test/
-│   └── pom.xml
+├── reward-service/
+│   └── src/main/java/com/paypal/reward_service/
+│       └── consumer/ entity/ repository/ service/
 │
-├── wallet-service/                    ← Stage 6
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/paypal/wallet_service/
-│   │   │   │   ├── controller/        # WalletController
-│   │   │   │   ├── dto/               # CreateWalletRequest, CreditRequest, DebitRequest, HoldRequest, etc.
-│   │   │   │   ├── entity/            # Wallet, WalletHold, Transaction
-│   │   │   │   ├── exception/         # InsufficientFundsException, NotFoundException
-│   │   │   │   ├── repository/        # WalletRepository, WalletHoldRepository, TransactionRepository
-│   │   │   │   ├── scheduler/         # HoldExpiryScheduler
-│   │   │   │   └── service/           # WalletService
-│   │   │   └── resources/
-│   │   │       └── application.yml
-│   │   └── test/
-│   └── pom.xml
+├── wallet-service/
+│   └── src/main/java/com/paypal/wallet_service/
+│       └── controller/ dto/ entity/ exception/ repository/ scheduler/ service/
 │
 └── README.md
 ```
-
-> 📁 Additional service folders will be added as the project progresses through each stage.
+> Each service follows the standard Spring Boot layout (`src/main/resources/application.properties`, `pom.xml`, `src/test`) — omitted above for brevity.
 
 ---
 
 ## 8. How to Run
 
-### Prerequisites
-
-- Java 17+
-- Maven 3.8+
-- Docker (for Kafka + Zookeeper via Docker Compose, and Redis as a standalone container)
-
-### Step 1 — Clone Repository
+**Prerequisites:** Java 17+, Maven 3.8+, Docker
 
 ```bash
 git clone https://github.com/ishant212/paypal-clone
 cd paypal-clone
-```
 
-### Step 2 — Start Kafka & Zookeeper
-
-```bash
+# Kafka + Zookeeper
 docker compose up -d
-```
 
-### Step 3 — Start Redis
-
-Redis runs as a standalone container (not part of `docker-compose.yml`):
-
-```bash
+# Redis (standalone)
 docker run -d -p 6379:6379 --name redis redis:alpine
+docker exec redis redis-cli ping   # expect: PONG
 ```
 
-Verify it's up:
-
+Then, for each service:
 ```bash
-docker exec redis redis-cli ping
-```
-
-Expected output: `PONG`
-
-### Step 4 — Navigate to a Service
-
-```bash
-cd api-gateway
-# or
-cd user-service
-# or
-cd transaction-service
-# or
-cd notification-service
-# or
-cd reward-service
-# or
-cd wallet-service
-```
-
-### Step 5 — Build & Run
-
-```bash
+cd <service-folder>   # e.g. wallet-service, user-service, transaction-service, etc.
 mvn spring-boot:run
 ```
 
-> 💡 Start the downstream services first, then the **api-gateway** last, so its routes have something to forward to. Once running, send requests to the Gateway's port instead of each service's individual port.
+> 💡 Start downstream services — **including `wallet-service`** — before `transaction-service`, since it now calls the Wallet Service synchronously. Start `api-gateway` last, then send requests to its port (`:8080`).
 
-### Step 6 — Access H2 Console *(Optional)*
-
-```
-URL:      http://localhost:8080/h2-console
-JDBC URL: jdbc:h2:mem:testdb
-Username: sa
-Password: (leave blank)
-```
-
-> ⚠️ H2 is an in-memory database used for development. Data resets on restart. MySQL/PostgreSQL will be integrated in a later stage.
+**H2 Console** *(optional, per service)*: `http://localhost:8080/h2-console` · JDBC URL `jdbc:h2:mem:testdb` · user `sa` · no password.
 
 ---
 
 ## 9. API Endpoints
 
-> 🚪 **All endpoints below are now reachable through the API Gateway**, which routes to the underlying service. The Gateway itself enforces JWT authentication via `JwtAuthFilter` — requests to protected routes without a valid token are rejected at the Gateway before reaching the service. Direct service ports still work too, but the Gateway is the intended single entry point going forward.
+> 🚪 Most endpoints route through the API Gateway, which enforces JWT auth via `JwtAuthFilter`. Wallet Service is the current exception — see note below.
 
-### Auth — Base URL: `/auth`
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
+### Auth — `/auth`
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
 | `POST` | `/auth/signup` | Register a new user | ❌ |
-| `POST` | `/auth/login` | Login and receive JWT | ❌ |
+| `POST` | `/auth/login` | Login, receive JWT | ❌ |
 
-### Sample Request — Signup
-
-```json
-POST /auth/signup
-Content-Type: application/json
-
-{
-  "name": "Ishant Shekhar",
-  "email": "ishant@example.com",
-  "password": "securepassword"
-}
-```
-
-### Sample Response — Signup
-
-```
-User Registration successful
-```
-
-### Sample Request — Login
-
-```json
-POST /auth/login
-Content-Type: application/json
-
-{
-  "email": "ishant@example.com",
-  "password": "securepassword"
-}
-```
-
-### Sample Response — Login
-
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiUk9MRV9VU0VSIiwic3ViIjoiaXNoYW50QGV4YW1wbGUuY29tIn0..."
-}
-```
-
-> Use the returned token as `Authorization: Bearer <token>` in subsequent requests to protected endpoints.
-
----
-
-### User Service — Base URL: `/api/users`
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
+### User Service — `/api/users`
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
 | `POST` | `/api/users` | Create a new user | ❌ |
 | `GET` | `/api/users/{id}` | Fetch user by ID | ✅ |
 | `GET` | `/api/users` | Fetch all users | ✅ |
 
-### Sample Request — Create User
+### Transaction Service — `/api/transactions`
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/transactions/create` | Create a transaction — holds, then captures/releases funds via Wallet Service, publishes a Kafka event | ✅ |
 
-```json
-POST /api/users
-Content-Type: application/json
-
-{
-  "name": "Ishant Shekhar",
-  "email": "ishant@example.com",
-  "password": "securepassword"
-}
-```
-
-### Sample Response — Create User
-
-```json
-{
-  "id": 1,
-  "name": "Ishant Shekhar",
-  "email": "ishant@example.com",
-  "createdAt": "2025-01-01T10:00:00"
-}
-```
-
----
-
-### Transaction Service — Base URL: `/api/transactions`
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| `POST` | `/api/transactions/create` | Create a new transaction (publishes Kafka event on success) | ✅ |
-
-### Sample Request — Create Transaction
-
+**Sample request/response**
 ```json
 POST /api/transactions/create
-Content-Type: application/json
-
-{
-  "senderId": 1,
-  "receiverId": 2,
-  "amount": 140.12
-}
+{ "senderId": 2, "receiverId": 1, "amount": 1909.0 }
 ```
-
-### Sample Response — Create Transaction
-
 ```json
 {
-  "id": 1,
-  "senderId": 1,
-  "receiverId": 2,
-  "amount": 140.12,
-  "timestamp": "2026-05-21T09:43:31.8732542",
+  "id": 2,
+  "senderId": 2,
+  "receiverId": 1,
+  "amount": 1909.0,
+  "timestamp": "2026-07-01T00:24:49.4489914",
   "status": "SUCCESS"
 }
 ```
 
-> 📋 Full API documentation (Swagger/OpenAPI) will be added in a future stage.
+### Notification / Reward Services
+| Service | Route | Description | Auth |
+|---|---|---|---|
+| Notification | `/api/notifications/**` | Gateway-routed; primarily a Kafka consumer on `txn-initiated` | ✅ |
+| Reward | `/api/rewards/**` | Gateway-routed; primarily a Kafka consumer on `txn-initiated` | ✅ |
 
----
-
-### Notification Service — Base URL: `/api/notifications` *(Stage 4/5)*
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| — | `/api/notifications/**` | Routed through the Gateway (rate-limited); primary role is still as a Kafka consumer on `txn-initiated` | ✅ |
-
-> The Notification Service is primarily event-driven (Kafka consumer), but its route is also registered at the Gateway for future REST endpoints (e.g. fetching notification history).
-
----
-
-### Reward Service — Base URL: `/api/rewards` *(Stage 4/5)*
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| — | `/api/rewards/**` | Routed through the Gateway (rate-limited); primary role is still as a Kafka consumer on `txn-initiated` | ✅ |
-
-> The Reward Service is primarily event-driven (Kafka consumer), but its route is also registered at the Gateway for future REST endpoints (e.g. fetching reward history).
-
----
-
-### Wallet Service — Base URL: `/api/v1/wallets` *(Stage 6)*
-
+### Wallet Service — `http://localhost:8088/api/v1/wallets` *(direct; not yet gateway-routed)*
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/v1/wallets` | Create wallet |
@@ -833,43 +392,52 @@ Content-Type: application/json
 
 ## 10. Screenshots
 
-### 🟢 Signup — POST `/auth/signup`
-![Signup](assets/user_signup.png)
+### Auth & Users
+| Signup | Login | Create User |
+|---|---|---|
+| ![Signup](assets/user_signup.png) | ![Login](assets/user_login.png) | ![Create User](assets/create_user.png) |
 
-### 🔵 Login — POST `/auth/login`
-![Login](assets/user_login.png)
+| Fetch User by ID | Fetch All Users |
+|---|---|
+| ![Get User](assets/get_user_by_id.png) | ![Get All Users](assets/get_all_users.png) |
 
-### 🟢 Create User — POST `/api/users`
-![Create User](assets/create_user.png)
+### Transactions + Wallet
+| Credit Wallet — `POST /wallets/credit` | Create Transaction — initial flow |
+|---|---|
+| ![Credit Wallet](assets/crediting-in-wallet.png) | ![Transaction Creation](assets/transaction-creation-postman.png) |
 
-### 🔵 Fetch User by ID — GET `/api/users/{id}`
-![Get User by ID](assets/get_user_by_id.png)
+| Create Transaction — Success (hold → capture) | Transaction Service logs — Success                  |
+|---|-----------------------------------------------------|
+| ![Transaction Success](assets/transaction-postman.png) | ![Transaction Logs](assets/transaction-success.png) |
 
-### 🟡 Fetch All Users — GET `/api/users`
-![Get All Users](assets/get_all_users.png)
+| Create Transaction — Failed (hold → released) | Transaction Service logs — Failure                                     |
+|---|------------------------------------------------------------------------|
+| ![Transaction Failed](assets/transaction-failed.png) | ![Transaction Failed Logs](assets/transaction-failed-confirmation.png) |
 
-### 🟢 Create Transaction — POST `/api/transactions/create`
-![Create Transaction](assets/transaction-creation-postman.png)
+### Kafka & Gateway
+| Kafka message published | Notification consumed | Reward consumed |
+|---|---|---|
+| ![Kafka Message](assets/kafka-message.png) | ![Kafka Notification](assets/kafka-notification-confirmation.png) | ![Kafka Reward](assets/kafka-reward-confirmation.png) |
 
-### 📨 Kafka Event Processing — Transaction → Notification
-![Kafka Notification Confirmation](assets/kafka-notification-confirmation.png)
-
-### 🎁 Kafka Event Processing — Transaction → Reward
-![Kafka Reward Confirmation](assets/kafka-reward-confirmation.png)
-
-### 🚦 Gateway Rate Limiting — 429 Too Many Requests
-![Rate Limiter](assets/rate-limiter.png)
-
-> 📸 Screenshots captured using Postman and IDE run logs. More will be added with each new feature.
+| Gateway rate limit — `429 Too Many Requests` |
+|---|
+| ![Rate Limiter](assets/rate-limiter.png) |
 
 ---
 
-## 11. Planned Microservices
+## 11. Future Enhancements
 
-| Service / Feature | Responsibility |
-|---------|---------------|
-| Wallet Service — Gateway routing | Route `/api/v1/wallets/**` through API Gateway |
-| Service Discovery (Eureka) | Dynamic service registration & lookup |
+| Item | Description |
+|---|---|
+| Service Discovery (Eureka) | Dynamic service registration & lookup instead of hardcoded URLs |
+| Stage 7 — Docker & Kubernetes | Containerize and deploy all services |
+| Production DB | Swap H2 for MySQL/PostgreSQL |
 
----  
-> ⭐ This project is being built stage by stage as a portfolio demonstration of real-world microservices design. Star it to follow along!
+---
+
+## 12. Contributors
+
+Built and maintained by [Ishant Shekhar Eeshu](https://github.com/ishant212).
+
+---
+> ⭐ Core backend (auth, transactions, wallet, async messaging, gateway) is feature-complete. Star the repo to follow along when deployment work (Stage 7) resumes!
