@@ -1,30 +1,46 @@
 package com.paypal.transaction_service.dto;
 
-import com.paypal.transaction_service.entity.Transaction;
-
 public class TransferRequest {
 
-    private String senderName;
-
-    private String receiverName;
-
+    private Long senderId;
+    private Long receiverId;
     private Double amount;
 
-    public TransferRequest(){};
 
-    public TransferRequest(String senderName, String receiverName, Double amount){
-        this.senderName = senderName;
-        this.receiverName = receiverName;
+    public TransferRequest() {
+    }
+
+    public TransferRequest(Long senderId, Long receiverId, Double amount,
+                           String senderNameSnapshot, String receiverNameSnapshot) {
+        this.senderId = senderId;
+        this.receiverId = receiverId;
         this.amount = amount;
     }
-    public String getSenderName(){ return  senderName;}
-    public void setSenderName(String senderName){this.senderName = senderName;}
 
-    public String getReceiverName(){ return  receiverName;}
-    public void setReceiverName(String receiverName){this.receiverName = receiverName;}
+    // Getters
+    public Long getSenderId() {
+        return senderId;
+    }
 
-    public Double getAmount(){ return amount;}
-    public void setAmount(Double amount){this.amount = amount;}
+    public Long getReceiverId() {
+        return receiverId;
+    }
 
+    public Double getAmount() {
+        return amount;
+    }
+
+    // Setters
+    public void setSenderId(Long senderId) {
+        this.senderId = senderId;
+    }
+
+    public void setReceiverId(Long receiverId) {
+        this.receiverId = receiverId;
+    }
+
+    public void setAmount(Double amount) {
+        this.amount = amount;
+    }
 
 }
